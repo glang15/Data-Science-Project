@@ -1,0 +1,160 @@
+---
+title: "Project 1 - Chicago Crimes Data Visualization"
+author: "Grace Lang and Jonathan Bugg"
+date: "September 30th, 2018"
+---
+
+
+```{r}
+
+#Setting up our environmnet and librarying various packages
+workingdir <- "C:\\Users\\Jonathan\\Dropbox\\FourthYear\\DS4001\\Data\\Chicago_Crimes\\crimes-in-chicago"
+setwd(workingdir)
+library(lubridate)
+library(ggplot2)
+library(ggmap)
+library(dplyr)
+library(ggrepel)
+library(tidyverse)
+
+#Loading in the necessary data
+Chicago_Crime <- read.csv("Chicago_Crimes_2012_to_2017.csv")
+Police_stations <- read.csv("Police_Stations.csv")
+```
+## Data Background
+The analysis of crime in Chicago was performed using the 2012-2017 Chicago Crime dataset from kaggle.com (kaggle.com/currie32/crimes-in-chicago). Due to the CLEAR (Citizen Law Enforcement Analysis and Reporting) system, crime data is made available to the public by the Chicago Police Department. There may be errors in the data because information could be based on preliminary reports that have not been verified. As a result, information is potentially updated and can change overtime. External data was also utilized to visualize the location of chicago police stations.
+
+This report specifically focuses on violent crimes with respect to location and time. A violent crime defined by the FBI is a crime "composed of four offenses: murder and nonnegligent manslaughter, forcible rape, robbery, and aggravated assault." The FBI more generally defines violent crime as "those offenses which involve force or threat of force." We interpreted these definitions when choosing the subset of crimes to analyze. Therefore we assumed violent crimes are those categorized in the kaggle dataset as: Battery, Robbery, Assault, Criminal Sexual Assault, Sex Offense, Homicide, Kidnapping.
+
+To understand how to best clean the data, we first needed to grasp how much data was missing. There are just over 1.4 million crimes in this dataset and we wanted to see how many NA values are in each of the 23 variables. The largest percentage of missing data comes from the location data (Latitude, Longitude, X.Coordinate, and Y.Coordinate).With so many observations and the nature of the missing data (location data is hard to impute) we decided to remove all observations without location data. After removing these rows, we analyzed which columns still had NA values. It was found District, Community Area, and Ward had NAs but these missing values composed much less than 1% of the total observations. Therefore, these rows were also removed. 
+
+## Data Cleaning
+```{r}
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+apply(Chicago_Crime,2,pMiss)
+```
+
+The cleaned dataset contains only rows that have all values present. It should be recognized that removing observations may add some bias to the data set. The location data made up the largest percentage of missingness: approximately 2.5% of the data was NA. One possible implication of removing this data is that all of these missing values are concentrated in one area. This may result in one area that appears to have less crime than reality. Also it is unclear if the data is missing completely at random or missing not at random. Missingness could be related to other features and deleting these observations could skew other analysis results.  Taking these possible biases into account, it was determined the best method for dealing with missing data was to remove it due to the low percentage of missing data.
+
+```{r}
+#Filtering down the Crime data set to remove NA values
+Chicago_Crime <- Chicago_Crime %>% 
+    filter(!is.na(X.Coordinate), !is.na(District),!is.na(Community.Area),!is.na(Ward))
+```
+
+```{r}
+#Filtering down to violent crime types
+violent_crime <- Chicago_Crime %>% 
+    filter(Primary.Type == 'BATTERY'| Primary.Type =='ROBBERY'| Primary.Type == 'ASSAULT'| Primary.Type =='CRIM SEXUAL ASSAULT'|Primary.Type =='SEX OFFENSE'|Primary.Type =='HOMICIDE'| Primary.Type =='KIDNAPPING')
+```
+
+```{r}
+#Using  Lubridate for data transformation and feature extraction for date and hour
+violent_crime$Date <- mdy_hms(violent_crime$Date)
+violent_crime$hour <- hour(violent_crime$Date)
+violent_crime$yearMonthDay <- date(violent_crime$Date)
+
+#Turning the boolean Arrest variable into a integer for calculation use later
+violent_crime$Arrest <- as.integer(violent_crime$Arrest == "True")
+```
+
+##Visualization 1: Crime and Arrest Percentage over 2012-2017
+
+First, we wanted to look at the total crimes and arrest percentage over the entire dataset. This graph shows the count of crimes per day and the percentage of arrests made over the entire 2012-2017 period.
+```{r}
+#Using group_by and summarize to calculate number of crimes and arrest percentages by day 
+by_time_arrest <- group_by(violent_crime, yearMonthDay)  %>% 
+  summarize(count = n(), numArrests = sum(Arrest, na.rm = TRUE)) %>%
+  mutate(arrestPercent = numArrests/count)
+
+#Using ggplot to graph the crimes per day and arrest percentages over the entire dataset date range (2012-2017)
+ggplot(data = by_time_arrest, aes(x=yearMonthDay)) + geom_line(aes(y=count, color = 'blue')) + geom_line(aes(y=arrestPercent*500, color = 'red')) + scale_y_continuous(sec.axis = sec_axis(~./500, name = "Arrest %")) + geom_smooth(mapping = aes(y = count)) + geom_smooth(mapping = aes(y = arrestPercent*500)) + labs(title = "Violent Crime Over 2012-2017", x="Time", y="Daily Crime Count") 
+```
+
+The two main takeaways from this graph are the cyclical nature of crime and the general decrease in amount of crime. We can observe the cyclical nature of crime repeating itself over the entire dataset, with the amount of crime peaking during the middle of each year. Also over this five year period we can see that the amount of crime is decreasing. The arrest percentage does not seem to be decreasing until mid-2016. There are various things that could have caused this beyond the actual percentage of arrests decreasing. Since the data is more recent the police could still be working on making arrests for those cases, or the data has not been updated yet.
+
+##Visualization 2: Monthly Crime Breakdown by Type
+
+After looking at the cyclical nature of crime in Chicago by year, we then decided to analyze monthly violent crime .This graph totals all the violent crime over the years 2012-2017 and breaks it down by month. We focused on 2 factors: 1) The overall violent crime count each month and 2) The ratio of type of violent crime count to the total violent crime count. 
+
+```{r}
+#Feature extraction to get just the month out of the date
+month <-month(as.POSIXlt(violent_crime$Date, format="%d/%m/%Y"))
+violent_crime$month<-month
+
+#Creating bar plot to breakdown type of crime count by month
+ggplot(data = violent_crime) + geom_bar(mapping = aes(x = month, fill = Primary.Type)) + labs(title = "Monthly Crime by Type", x="Month", y="Monthly Crime Count")
+```
+Crime count is highest in the summer months. It peaks May-July and begins declining in August. February has the lowest crime count of all the months for this time period. This graph shows battery is the most common type of violent crime followed by assault and robbery. Homicide, kidnapping, criminal sexual assault and sex offense makeup a small proportion of each months' total violent crime. This trend of higher crime rates in summer months is well documented. Possible reasoning include: people less likely to stay indoors, longer days, and students not in school.
+
+##Visualization 3: Mapping Crime
+
+Now that we determined when violent crime was most likely to occur, the next piece of information we wanted to gain is where it was most likely to occur. This heat map shows the density of crime in Chicago.
+
+```{r}
+#Creating base satellite map of chicago
+chicago_sat <- ggmap(get_googlemap(center = c(lon = -87.6298, lat = 41.8781),
+                         zoom = 11, scale = 2,
+                         maptype ='satellite',
+                         color = 'color')) 
+
+#Overlaying crime density map to the map of chicago
+chicago_sat + stat_density2d(aes(x = Longitude, y = Latitude, fill=..level.., alpha = 0.05),data = violent_crime, 
+                   geom = "polygon", bins = 8) + scale_fill_gradient(low = 'white', high = 'red') + labs(title = "Violent Crime Density in Chicago", fill = str_c('Crime Density'))
+
+```
+
+It is evident crime is occurring most often to the West and South of the City. Downtown Chicago is the red area on the water, in the middle. This region also has a relatively high crime density. To the north of the city, there is much less violent crime. This graph provides insight into how crime is dispersed over the city. 
+
+##Visualization 4: Mapping Crime and Police Stations
+
+After seeing how crime is distributed across the city we wanted to see how the police stations are distributed with regards to the crime hot spots. Using the Latitude and Longitude from the Police Stations dataset, we added a blue dot for the location of every police station.
+```{r}
+get_googlemap(urlonly = TRUE)
+
+#Defining colors for use in maps
+col1 = "#011f4b" ## sapphire
+col4 = "#CC0000" ## red
+
+#Creating base terrain map for use in visualizations
+chicago_terrain <- ggmap(get_googlemap(center = c(lon = -87.6298, lat = 41.8781),
+                         zoom = 11, scale = 2,
+                         maptype ='terrain',
+                         color = 'color'))
+
+#Taking a random sub-sample to use in map
+Chicago_sample <- violent_crime[sample(1:nrow(violent_crime), 17500,
+                          replace=FALSE),]
+
+#Creating crime density map overlayed with police station location data
+chicago_terrain + geom_point(aes(x = Longitude, y = Latitude), colour = col4, data = Chicago_sample, alpha=0.2, size = 0.5) + 
+  theme(legend.position="bottom")  + 
+  geom_point(aes(x = LONGITUDE, y = LATITUDE, stroke = 2), colour=col1, data = Police_stations, size =3) + 
+  scale_shape_manual(values=1:nlevels(Police_stations$LATITUDE))
+```
+
+We can see that some stations ae located in high crime density locaitons, while others are in low crime density areas. We noted that there are areas of high crime density without police stations near them, espceically in the western and southern parts of the city 
+
+
+##Visualization 5: Mapping crime by time of day
+
+The next step in our analysis of violent crime in Chicago combines the Where and the When categories. We wanted to look at what time of day has the highest frequency of violent crime, and where this violent crime is occuring. We divided one day into 8 categories of 3 hours: 12am-3am, 3am-6am, 6am-9am, 9am-12pm, 12pm-3pm, 3pm-6pm, 6pm-9pm, 9pm-12am.
+```{r}
+#Binning hours into larger categories for use in map
+violent_crime$binned_hours <- case_when(violent_crime$hour %in% c(0,1,2) ~ "12am-3am", violent_crime$hour %in% c(3,4,5) ~"3am-6am",violent_crime$hour %in% c(6,7,8) ~"6am-9am", violent_crime$hour %in% c(9,10,11) ~"9am-12pm", violent_crime$hour %in% c(12,13,14) ~"12pm-3pm", violent_crime$hour %in% c(15,16,17) ~"3pm-6pm", violent_crime$hour %in% c(18,19,20) ~"6pm-9pm", violent_crime$hour %in% c(21,22,23) ~"9pm-12am")
+
+#Creating density map of crime with a facet wrap of the binned hours variable
+chicago_terrain + stat_density2d(aes(x = Longitude, y = Latitude, fill=..level.., alpha = 0.05),data = violent_crime, geom = "polygon", bins = 8) + scale_fill_gradient(low = 'white', high = 'red') + labs(title = "Violent Crime Density by Time of Day", fill = str_c('Crime Density'))+facet_wrap(~ binned_hours) + theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), axis.title.y=element_blank(), axis.text.y=element_blank(), axis.ticks.y=element_blank())
+
+```
+
+The map shows the most volatile areas--where crime rate is changing most rapidly and when. It is clear the area that is fluctuating the most throughout the day is downtown Chicago which has the highest crime density between 12am-6am. The South Side of Chicago has pretty consistent crime rates throughout the day. The Westside is not a volatile as downtown, but some change is evident throughout the day. There are noticeably lower crime rates during 12am-6am on the West Side (opposite of downtown). 
+
+##Conclusion
+
+From analyzing the Chicago Crime dataset made available by the Chicago PD we were able to gain insight into when and where violent crimes are most likely to occur. It is clear crime has a consistent cyclical pattern during the time period looked at. Although crime is decreasing overall over the timeframe analyzed, arrest percentage remained relatively consistent. Possible reasoning behind this is that the number of police officers and detectives fluctuates. Thus, there are more or less resources to police the same areas that are experiencing differing amounts of crime. Additionally, it is evident that this cyclical crime pattern peaks in the summer months and battery is the main driver of these crime counts.
+
+The three heat maps in this analysis provide valuable information on where the highest frequency of crime is. The number of police stations was not found to increase with increasing crime rate. This does not take into account the size of the police station, which may be larger in these high-crime areas. The three main hotspots for crime are downtown, west and south. Crime on South Side covers noticably larger area than the other two hotspots, but the crime on the West Side appears more dense. Additionally the crimes occurring on the West Side and the South Side are fluctuating less on an hourly basis than the crimes in downtown Chicago. Typically downtown in a city has a more dynamic environment, so it is logical to hypothesize the higher traffic area would have higher changing crime rates.
+
+This information could prove to be useful for many different stakeholders. For example, tourists can use this information to make educated decisions about where to travel. People moving to the area can understand more about the safety of neighborhoods before choosing where to live. The Chicago PD could allocate resources by predicting where crimes may occur and when based of the previous activity in the area. A deep analysis into Chicago crime made public has life-saving potential.
+
